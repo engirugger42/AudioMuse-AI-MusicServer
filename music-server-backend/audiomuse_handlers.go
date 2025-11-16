@@ -12,32 +12,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type AudioMuseSongInfo struct {
-	ItemID string `json:"item_id"`
-	Title  string `json:"title"`
-	Artist string `json:"author"`
-}
-
 // getSongsByIDs is a helper function to fetch song details from a list of IDs, preserving order.
 func getSongsByIDs(ids []string) ([]SubsonicSong, error) {
 	if len(ids) == 0 {
 		return []SubsonicSong{}, nil
 	}
 
-	// Create placeholders for the IN clause, e.g., (?, ?, ?)
-	placeholders := strings.Repeat("?,", len(ids)-1) + "?"
+	// Convert string IDs to []interface{} for the query
+	args := "'" + strings.Join(ids, `','`) + `'`
 	query := fmt.Sprintf(`
 		SELECT id, title, artist, album, path, play_count, last_played, duration
 		FROM songs WHERE id IN (%s)
-	`, placeholders)
+	`, args)
 
-	// Convert string IDs to []interface{} for the query
-	args := make([]interface{}, len(ids))
-	for i, v := range ids {
-		args[i] = v
-	}
-
-	rows, err := db.Query(query, args...)
+	log.Printf("Query for songs by IDs: %v", query)
+	rows, err := db.Query(query)
 	if err != nil {
 		return nil, err
 	}
