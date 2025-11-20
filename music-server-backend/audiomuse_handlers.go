@@ -70,32 +70,6 @@ func getSongsByIDs(ids []string) ([]SubsonicSong, error) {
 	return orderedSongs, nil
 }
 
-func getSongsByTitleAndArtist(tracks []AudioMuseSongInfo) ([]SubsonicSong, error) {
-
-	var songs []SubsonicSong
-	for _, track := range tracks {
-		query := fmt.Sprintf(`SELECT id, title, artist, album, path, play_count, last_played, duration FROM songs WHERE title = "%s" AND artist = "%s" LIMIT 1`,
-			track.Title, track.Artist)
-
-		var song SubsonicSong
-		var lastPlayed, path, playCount, duration interface{} // Use interface{} to handle NULLs gracefully
-		// Set duration if it's a valid integer
-		if dur, ok := duration.(int64); ok {
-			song.Duration = int(dur)
-		}
-		err := db.QueryRow(query).Scan(&song.ID, &song.Title, &song.Artist, &song.Album, &path, &playCount, &lastPlayed, &duration)
-		if err != nil {
-			log.Printf("Failed to find Title: %s by Artist: %s, is it in your library?", track.Title, track.Artist)
-			log.Printf("You can check by conencting to your local DB and running the query:")
-			log.Printf("SELECT id, title, artist, album, path, play_count, last_played, duration FROM songs WHERE title = \"%s\" AND artist = \"%s\" LIMIT 1;", track.Title, track.Artist)
-		} else {
-			songs = append(songs, song)
-		}
-	}
-
-	return songs, nil
-}
-
 func subsonicGetSimilarSongs(c *gin.Context) {
 	// Allow all authenticated users to request similar songs (Instant Mix).
 	_ = c.MustGet("user").(User)
@@ -137,16 +111,23 @@ func subsonicGetSimilarSongs(c *gin.Context) {
 		return
 	}
 
-	var similarTracks []AudioMuseSongInfo
+	var similarTracks []struct {
+		ItemID string `json:"item_id"`
+	}
 	if err := json.Unmarshal(body, &similarTracks); err != nil {
 		subsonicRespond(c, newSubsonicErrorResponse(0, "Failed to parse similar tracks from AudioMuse-AI Core."))
 		return
 	}
 
-	var songs []SubsonicSong
-	songs, err = getSongsByTitleAndArtist(similarTracks)
+	var songIDs []string
+	for _, track := range similarTracks {
+		songIDs = append(songIDs, track.ItemID)
+	}
+
+	songs, err := getSongsByIDs(songIDs)
 	if err != nil {
-		log.Printf("Failed to retrieve songs from local database: %v", err)
+		subsonicRespond(c, newSubsonicErrorResponse(0, "Database error fetching song details."))
+		return
 	}
 
 	response := newSubsonicResponse(&SubsonicDirectory{
