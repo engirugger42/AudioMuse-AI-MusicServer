@@ -34,6 +34,51 @@ type AudioInfo struct {
 	Duration int // Duration in seconds
 }
 
+type LBRequest struct {
+	ApiKey string
+	Body   LBRequestBody
+}
+
+type LBRequestBody struct {
+	ListenType string             `json:"listen_type,omitempty"`
+	Payload    []ListenBrainzInfo `json:"payload,omitempty"`
+}
+
+// ListenBrainzInfo represents the info relevant for scrobbling servers.
+// Created using https://transform.tools/json-to-go
+// Reference JSON: https://listenbrainz.readthedocs.io/en/latest/users/json.html#submission-json
+type ListenBrainzInfo struct {
+	ListenedAt    int             `json:"listened_at,omitempty"`
+	TrackMetadata LBTrackMetadata `json:"track_metadata,omitempty"`
+}
+
+type LBTrackMetadata struct {
+	AdditionalInfo LBAdditionalInfo `json:"additional_info,omitempty"`
+	ArtistName     string           `json:"artist_name,omitempty"`
+	TrackName      string           `json:"track_name,omitempty"`
+	ReleaseName    string           `json:"release_name,omitempty"`
+}
+
+type LBAdditionalInfo struct {
+	MediaPlayer             string   `json:"media_player,omitempty"`
+	SubmissionClient        string   `json:"submission_client,omitempty"`
+	SubmissionClientVersion string   `json:"submission_client_version,omitempty"`
+	ReleaseMbid             string   `json:"release_mbid,omitempty"`
+	ArtistMbids             []string `json:"artist_mbids,omitempty"`
+	RecordingMbid           string   `json:"recording_mbid,omitempty"`
+	Tags                    []string `json:"tags,omitempty"`
+	DurationMs              int      `json:"duration_ms,omitempty"`
+}
+
+type lbResponse struct {
+	Code     int    `json:"code"`
+	Message  string `json:"message"`
+	Error    string `json:"error"`
+	Status   string `json:"status"`
+	Valid    bool   `json:"valid"`
+	UserName string `json:"user_name"`
+}
+
 // getDuration extracts the duration of an audio file using ffprobe
 func getDuration(filePath string) int {
 	cmd := exec.Command("ffprobe",
@@ -842,6 +887,69 @@ func subsonicScrobble(c *gin.Context) {
 
 	log.Printf("Scrobbled song '%s' for user '%s'", songID, user.Username)
 	subsonicRespond(c, newSubsonicResponse(nil))
+
+	lbUrl := getEnv("LB_URL", "")
+	lbToken := getEnv("LB_TOKEN", "")
+
+	if lbUrl != "" || lbToken != "" {
+		log.Printf("Listenbrains endpoint and/or token not found, skipping LB scrobble.")
+	} else {
+		log.Printf("Listenbrainz endpoint found, scrobbling to LB.")
+		lbScrobble(songID, lbUrl, lbToken)
+	}
+}
+
+// If ListenBrainz info is set, fire that off too.
+func lbScrobble(songId string, lbUrl string, lbToken string) error {
+	songs, err := getSongsByIDs([]string{songId})
+	song := songs[0]
+	if err != nil {
+		log.Printf("Error getting song by id '%s': %v", songId, err)
+	}
+
+	request := &LBRequest{
+		ApiKey: lbToken,
+		Body: LBRequestBody{
+			ListenType: "single",
+			Payload: []ListenBrainzInfo{
+				{
+					ListenedAt: int(time.Now().Unix()),
+					TrackMetadata: LBTrackMetadata{
+						ArtistName:  song.Artist,
+						TrackName:   song.Title,
+						ReleaseName: song.Album,
+					},
+				},
+			},
+		},
+	}
+
+	jsonData, _ := json.Marshal(request.Body)
+	// Craft the request with our song data
+	req, err := http.NewRequest("POST", lbUrl+"submit-listens", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("ListenBrainz request creation failed: %w", err)
+	}
+
+	// Set headers and make the request.
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Token "+request.ApiKey)
+	log.Printf("ListenBrainz req body content %v", req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("ListenBrainz POST failed: %v", err)
+	}
+	defer resp.Body.Close()
+	decoder := json.NewDecoder(resp.Body)
+
+	var response lbResponse
+	jsonErr := decoder.Decode(&response)
+	if resp.StatusCode != 200 && jsonErr != nil {
+		log.Printf("ListenBrainz Scrobble: HTTP Error, Status: (%d)", resp.StatusCode)
+		log.Printf("ListenBrainz Scrobble Error: %v", jsonErr)
+	}
+
+	return nil
 }
 
 func subsonicGetArtists(c *gin.Context) {
