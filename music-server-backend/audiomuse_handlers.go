@@ -18,15 +18,20 @@ func getSongsByIDs(ids []string) ([]SubsonicSong, error) {
 		return []SubsonicSong{}, nil
 	}
 
-	// Convert string IDs to []interface{} for the query
-	args := "'" + strings.Join(ids, `','`) + `'`
+	// Create placeholders for the IN clause, e.g., (?, ?, ?)
+	placeholders := strings.Repeat("?,", len(ids)-1) + "?"
 	query := fmt.Sprintf(`
 		SELECT id, title, artist, album, path, play_count, last_played, duration
 		FROM songs WHERE id IN (%s)
-	`, args)
+	`, placeholders)
 
-	log.Printf("Query for songs by IDs: %v", query)
-	rows, err := db.Query(query)
+	// Convert string IDs to []interface{} for the query
+	args := make([]interface{}, len(ids))
+	for i, v := range ids {
+		args[i] = v
+	}
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
