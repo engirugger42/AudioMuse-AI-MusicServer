@@ -891,7 +891,7 @@ func subsonicScrobble(c *gin.Context) {
 	lbUrl := getEnv("LB_URL", "")
 	lbToken := getEnv("LB_TOKEN", "")
 
-	if lbUrl != "" || lbToken != "" {
+	if lbUrl == "" || lbToken == "" {
 		log.Printf("Listenbrains endpoint and/or token not found, skipping LB scrobble.")
 	} else {
 		log.Printf("Listenbrainz endpoint found, scrobbling to LB.")
